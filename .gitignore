@@ -13,6 +13,7 @@ build/
 venv/
 env/
 ENV/
+.venv/
 
 # Data directories
 cryptopuzzles_data/
