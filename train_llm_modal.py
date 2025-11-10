@@ -277,131 +277,82 @@ def test_model(prompt: str, model_path: str = None):
     return response
 
 
-@app.function(image=image, volumes={"/models": volume})
+@app.function(
+    image=image,
+    volumes={"/models": volume},
+    mounts=[modal.Mount.from_local_file("process_cryptopuzzle_data.py", remote_path="/root/process_cryptopuzzle_data.py")],
+    timeout=3600
+)
 def process_and_upload_data():
     """
-    Process cryptopuzzle data directly in Modal and save to volume.
-    This way we don't need to download data locally.
+    Process cryptopuzzle data comprehensively in Modal and save to volume.
+    Uses advanced data processing with instruction-following format.
     """
-    import json
+    # Run the comprehensive processing script
     import subprocess
+    result = subprocess.run(
+        ["python", "/root/process_cryptopuzzle_data.py"],
+        cwd="/tmp",
+        capture_output=True,
+        text=True
+    )
+
+    print(result.stdout)
+    if result.stderr:
+        print("Errors:", result.stderr)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"Data processing failed with code {result.returncode}")
+
+    # The script processes data and saves to /tmp/processed_data
+    # Now copy to volume
+    import shutil
     from pathlib import Path
-    from datasets import Dataset
 
-    print("📥 Cloning cryptopuzzles repository...")
-    subprocess.run(["git", "clone", "https://github.com/FMLBeast/cryptopuzzles.git", "/tmp/cryptopuzzles"], check=True)
-
-    print("🔍 Processing puzzle data...")
-
-    # Debug: List directory structure
-    import os as debug_os
-    print("\n📂 Repository structure:")
-    for root, dirs, files in debug_os.walk("/tmp/cryptopuzzles"):
-        level = root.replace("/tmp/cryptopuzzles", "").count(debug_os.sep)
-        indent = " " * 2 * level
-        print(f"{indent}{debug_os.path.basename(root)}/")
-        subindent = " " * 2 * (level + 1)
-        for file in files[:5]:  # Show first 5 files per directory
-            print(f"{subindent}{file}")
-        if len(files) > 5:
-            print(f"{subindent}... and {len(files) - 5} more files")
-
-    # Process ARweave puzzles
-    arweave_dir = Path("/tmp/cryptopuzzles/ARweave")
-    arweave_examples = []
-
-    for puzzle_file in arweave_dir.glob("*.json"):
-        try:
-            with open(puzzle_file, 'r') as f:
-                data = json.load(f)
-
-            if isinstance(data, dict) and 'puzzle' in data:
-                puzzle = data['puzzle']
-                solution = data.get('solution', 'Unknown')
-                difficulty = data.get('difficulty', 'medium')
-
-                prompt = f"### Instruction:\nSolve this ARweave cryptopuzzle [Difficulty: {difficulty}]:\n\n{puzzle}\n\n### Response:\n"
-                response = f"The solution is: {solution}"
-
-                arweave_examples.append({
-                    "text": prompt + response,
-                    "puzzle_type": "arweave",
-                    "difficulty": difficulty
-                })
-        except Exception as e:
-            print(f"  ⚠️  Error processing {puzzle_file.name}: {e}")
-
-    print(f"  ✓ Processed {len(arweave_examples)} ARweave puzzles")
-
-    # Process other puzzle types
-    crypto_dir = Path("/tmp/cryptopuzzles/cryptocurrency")
-    crypto_examples = []
-
-    if crypto_dir.exists():
-        for puzzle_file in crypto_dir.glob("*.txt"):
-            try:
-                with open(puzzle_file, 'r') as f:
-                    content = f.read()
-
-                prompt = f"### Instruction:\nAnalyze this cryptocurrency puzzle:\n\n{content[:500]}\n\n### Response:\n"
-                response = "This puzzle involves analyzing blockchain transactions and cryptographic patterns."
-
-                crypto_examples.append({
-                    "text": prompt + response,
-                    "puzzle_type": "cryptocurrency",
-                    "difficulty": "medium"
-                })
-            except Exception as e:
-                print(f"  ⚠️  Error processing {puzzle_file.name}: {e}")
-
-    print(f"  ✓ Processed {len(crypto_examples)} cryptocurrency puzzles")
-
-    # Combine all examples
-    all_examples = arweave_examples + crypto_examples
-    print(f"\n📊 Total examples: {len(all_examples)}")
-
-    if len(all_examples) == 0:
-        raise ValueError("No puzzle examples were processed! Check the repository structure.")
-
-    # Split into train/val/test
-    from random import Random
-    rng = Random(42)
-    rng.shuffle(all_examples)
-
-    n = len(all_examples)
-    train_size = int(0.8 * n)
-    val_size = int(0.1 * n)
-
-    train_data = all_examples[:train_size]
-    val_data = all_examples[train_size:train_size + val_size]
-    test_data = all_examples[train_size + val_size:]
-
-    print(f"  📚 Train: {len(train_data)} examples")
-    print(f"  📚 Val: {len(val_data)} examples")
-    print(f"  📚 Test: {len(test_data)} examples")
-
-    # Save to volume
+    source = Path("/tmp/processed_data")
     dest = Path("/models/data")
-    dest.mkdir(exist_ok=True, parents=True)
 
-    # Save as JSON
-    with open(dest / "train.json", 'w') as f:
-        json.dump(train_data, f, indent=2)
-    with open(dest / "validation.json", 'w') as f:
-        json.dump(val_data, f, indent=2)
-    with open(dest / "test.json", 'w') as f:
-        json.dump(test_data, f, indent=2)
+    if source.exists():
+        # Remove old data if exists
+        if dest.exists():
+            shutil.rmtree(dest)
 
-    # Also save as HuggingFace datasets
-    Dataset.from_list(train_data).save_to_disk(str(dest / "train_dataset"))
-    Dataset.from_list(val_data).save_to_disk(str(dest / "val_dataset"))
-    Dataset.from_list(test_data).save_to_disk(str(dest / "test_dataset"))
+        # Copy new data
+        shutil.copytree(source, dest)
 
-    print("\n💾 Committing volume...")
-    volume.commit()
+        print(f"\n📦 Copied processed data to volume")
 
-    print("✅ Data processed and saved to /models/data")
-    return {"train": len(train_data), "val": len(val_data), "test": len(test_data)}
+        # Debug: Show what's in the volume
+        print(f"\n📂 Volume contents:")
+        import os
+        for item in os.listdir(dest):
+            item_path = dest / item
+            if item_path.is_file():
+                size = item_path.stat().st_size / 1024  # KB
+                print(f"  📄 {item} ({size:.1f} KB)")
+            else:
+                print(f"  📁 {item}/")
+
+        volume.commit()
+        print("\n✅ Data processed and committed to volume!")
+
+        # Count examples
+        import json
+        with open(dest / "train.json", 'r') as f:
+            train_data = json.load(f)
+        with open(dest / "validation.json", 'r') as f:
+            val_data = json.load(f)
+        with open(dest / "test.json", 'r') as f:
+            test_data = json.load(f)
+
+        return {
+            "train": len(train_data),
+            "val": len(val_data),
+            "test": len(test_data),
+            "status": "success"
+        }
+    else:
+        raise FileNotFoundError("Processed data directory not found!")
 
 
 @app.function(image=image, volumes={"/models": volume})
