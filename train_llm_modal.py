@@ -277,82 +277,225 @@ def test_model(prompt: str, model_path: str = None):
     return response
 
 
-@app.function(
-    image=image,
-    volumes={"/models": volume},
-    mounts=[modal.Mount.from_local_file("process_cryptopuzzle_data.py", remote_path="/root/process_cryptopuzzle_data.py")],
-    timeout=3600
-)
+@app.function(image=image, volumes={"/models": volume}, timeout=3600)
 def process_and_upload_data():
     """
     Process cryptopuzzle data comprehensively in Modal and save to volume.
     Uses advanced data processing with instruction-following format.
     """
-    # Run the comprehensive processing script
+    # Import processing code directly
+    import sys
+    sys.path.insert(0, '/root')
+
+    # Read and execute the processing script
+    with open('/root/train_llm_modal.py', 'r') as f:
+        # We'll define the processing inline instead
+        pass
+
+    # Inline comprehensive data processing
+    import json
     import subprocess
-    result = subprocess.run(
-        ["python", "/root/process_cryptopuzzle_data.py"],
-        cwd="/tmp",
-        capture_output=True,
-        text=True
-    )
-
-    print(result.stdout)
-    if result.stderr:
-        print("Errors:", result.stderr)
-
-    if result.returncode != 0:
-        raise RuntimeError(f"Data processing failed with code {result.returncode}")
-
-    # The script processes data and saves to /tmp/processed_data
-    # Now copy to volume
-    import shutil
     from pathlib import Path
+    from datasets import Dataset
+    import random
 
-    source = Path("/tmp/processed_data")
+    print("🔄 Starting comprehensive cryptopuzzle data processing...")
+
+    # Clone repository
+    repo_dir = Path("/tmp/cryptopuzzles")
+    if not repo_dir.exists():
+        print("📥 Cloning cryptopuzzles repository...")
+        subprocess.run([
+            "git", "clone",
+            "https://github.com/FMLBeast/cryptopuzzles.git",
+            str(repo_dir)
+        ], check=True)
+
+    all_examples = []
+
+    # Process ARweave training dataset
+    print("\n1️⃣ Processing ARweave training dataset...")
+    training_file = repo_dir / "data" / "training_dataset.json"
+    if training_file.exists():
+        with open(training_file, 'r') as f:
+            dataset = json.load(f)
+
+        for puzzle in dataset.get('training_examples', []):
+            puzzle_type = puzzle.get('type', 'general')
+            difficulty = puzzle.get('difficulty', 'medium')
+            problem = puzzle.get('problem', '')
+
+            # Build instruction
+            instruction = f"### Instruction:\n"
+            instruction += f"[Puzzle Type: {puzzle_type}] [Difficulty: {difficulty}]\n\n"
+            instruction += f"{problem}\n\n"
+
+            if 'sub_problems' in puzzle:
+                instruction += "Sub-problems to solve:\n"
+                for i, sub in enumerate(puzzle['sub_problems'], 1):
+                    sub_type = sub.get('type', 'general')
+                    question = sub.get('question', '')
+                    instruction += f"{i}. [{sub_type}] {question}\n"
+
+            instruction += "\n### Response:\n"
+
+            # Build response with reasoning
+            response = "Let me solve each sub-problem step by step:\n\n"
+
+            if 'sub_problems' in puzzle:
+                for i, sub in enumerate(puzzle['sub_problems'], 1):
+                    response += f"**Problem {i}** ({sub.get('type', 'general')}):\n"
+
+                    if 'steps' in sub:
+                        response += "Reasoning:\n"
+                        for step in sub['steps']:
+                            response += f"- {step}\n"
+                    elif 'explanation' in sub:
+                        response += f"Explanation: {sub['explanation']}\n"
+
+                    response += f"Solution: {sub.get('solution', '')}\n\n"
+
+            if 'final_solution' in puzzle:
+                response += f"**Final Answer**: {puzzle['final_solution']}\n"
+
+            all_examples.append({
+                "text": instruction + response,
+                "puzzle_id": puzzle.get('puzzle_id'),
+                "puzzle_type": puzzle_type,
+                "difficulty": difficulty
+            })
+
+        print(f"  ✓ Processed {len(all_examples)} ARweave examples")
+
+    # Process cryptocurrency puzzles
+    print("\n2️⃣ Processing cryptocurrency puzzles...")
+    crypto_file = repo_dir / "cryptocurrency_puzzles" / "datasets" / "challenge_index.json"
+    if crypto_file.exists():
+        with open(crypto_file, 'r') as f:
+            crypto_data = json.load(f)
+
+        # Bitcoin puzzle example
+        bitcoin_puzzle = crypto_data.get('bitcoin_puzzle_transaction', {})
+        recent_solves = bitcoin_puzzle.get('recent_solves', [])
+
+        for solve in recent_solves[:3]:
+            puzzle_id = solve.get('puzzle_id')
+            difficulty_bits = solve.get('difficulty_bits')
+
+            instruction = f"### Instruction:\n"
+            instruction += f"[Puzzle Type: Bitcoin Private Key Search] [Difficulty: {difficulty_bits}-bit]\n\n"
+            instruction += f"Explain how to solve Bitcoin Puzzle #{puzzle_id} which requires finding a private key in a {difficulty_bits}-bit search space.\n\n"
+            instruction += "### Response:\n"
+
+            response = f"To solve Bitcoin Puzzle #{puzzle_id}:\n\n"
+            response += f"**Problem**: Find private key in 2^{difficulty_bits} search space\n"
+            response += f"**Technique**: {solve.get('technique', 'GPU brute force')}\n\n"
+            response += f"**Approach**:\n"
+            response += f"1. Use optimized GPU tools like BitCrack\n"
+            response += f"2. Parallelize search across multiple GPUs\n"
+            response += f"3. Estimated time: {solve.get('solve_time_estimate', 'variable')}\n"
+
+            all_examples.append({
+                "text": instruction + response,
+                "puzzle_type": "cryptocurrency",
+                "difficulty": "hard"
+            })
+
+        print(f"  ✓ Processed {len(all_examples) - len(dataset.get('training_examples', []))} crypto examples")
+
+    # Add technique examples
+    print("\n3️⃣ Adding technique teaching examples...")
+
+    # Cryptarithm example
+    all_examples.append({
+        "text": """### Instruction:
+[Puzzle Type: Cryptarithm] [Difficulty: medium]
+
+Solve: AR + PAPER = PIZZA (each letter = unique digit)
+
+### Response:
+**Step 1**: Analyze structure - PIZZA is 5 digits, so P must be 9
+
+**Step 2**: Working systematically with constraints:
+- A = 6, R = 8, P = 9, E = 3, I = 7, Z = 0
+
+**Verification**: 68 + 96938 = 97006 ✓
+
+Technique: constraint_satisfaction""",
+        "puzzle_type": "cryptarithm",
+        "difficulty": "medium"
+    })
+
+    print(f"  ✓ Added technique examples")
+    print(f"\n📊 Total examples: {len(all_examples)}")
+
+    # Split into train/val/test
+    random.seed(42)
+    random.shuffle(all_examples)
+
+    n = len(all_examples)
+    train_size = int(0.8 * n)
+    val_size = int(0.1 * n)
+
+    train_data = all_examples[:train_size]
+    val_data = all_examples[train_size:train_size + val_size]
+    test_data = all_examples[train_size + val_size:]
+
+    print(f"\n4️⃣ Split dataset:")
+    print(f"  📚 Train: {len(train_data)} examples")
+    print(f"  📚 Val: {len(val_data)} examples")
+    print(f"  📚 Test: {len(test_data)} examples")
+
+    # Save to volume
     dest = Path("/models/data")
+    dest.mkdir(exist_ok=True, parents=True)
 
-    if source.exists():
-        # Remove old data if exists
-        if dest.exists():
-            shutil.rmtree(dest)
+    print(f"\n5️⃣ Saving to volume...")
 
-        # Copy new data
-        shutil.copytree(source, dest)
+    # Save as JSON
+    with open(dest / "train.json", 'w') as f:
+        json.dump(train_data, f, indent=2)
+    with open(dest / "validation.json", 'w') as f:
+        json.dump(val_data, f, indent=2)
+    with open(dest / "test.json", 'w') as f:
+        json.dump(test_data, f, indent=2)
 
-        print(f"\n📦 Copied processed data to volume")
+    print(f"  ✓ Saved JSON files")
 
-        # Debug: Show what's in the volume
-        print(f"\n📂 Volume contents:")
-        import os
-        for item in os.listdir(dest):
-            item_path = dest / item
-            if item_path.is_file():
-                size = item_path.stat().st_size / 1024  # KB
-                print(f"  📄 {item} ({size:.1f} KB)")
-            else:
-                print(f"  📁 {item}/")
+    # Save as HuggingFace datasets
+    Dataset.from_list(train_data).save_to_disk(str(dest / "train_dataset"))
+    Dataset.from_list(val_data).save_to_disk(str(dest / "val_dataset"))
+    Dataset.from_list(test_data).save_to_disk(str(dest / "test_dataset"))
 
-        volume.commit()
-        print("\n✅ Data processed and committed to volume!")
+    print(f"  ✓ Saved HuggingFace datasets")
 
-        # Count examples
-        import json
-        with open(dest / "train.json", 'r') as f:
-            train_data = json.load(f)
-        with open(dest / "validation.json", 'r') as f:
-            val_data = json.load(f)
-        with open(dest / "test.json", 'r') as f:
-            test_data = json.load(f)
+    # Debug: Show what's in the volume
+    print(f"\n📂 Volume contents:")
+    import os
+    for item in os.listdir(dest):
+        item_path = dest / item
+        if item_path.is_file():
+            size = item_path.stat().st_size / 1024  # KB
+            print(f"  📄 {item} ({size:.1f} KB)")
+        else:
+            print(f"  📁 {item}/")
 
-        return {
-            "train": len(train_data),
-            "val": len(val_data),
-            "test": len(test_data),
-            "status": "success"
-        }
-    else:
-        raise FileNotFoundError("Processed data directory not found!")
+    # Commit volume
+    volume.commit()
+    print("\n✅ Data processed and committed to volume!")
+
+    # Print sample
+    print("\n📝 Sample training example:")
+    print("="*60)
+    print(train_data[0]['text'][:400] + "...")
+    print("="*60)
+
+    return {
+        "train": len(train_data),
+        "val": len(val_data),
+        "test": len(test_data),
+        "status": "success"
+    }
 
 
 @app.function(image=image, volumes={"/models": volume})
