@@ -56,7 +56,6 @@ TRAINING_CONFIG = {
     gpu="A10G",  # Can upgrade to A100 for faster training
     volumes={"/models": volume},
     timeout=86400,  # 24 hours
-    secrets=[modal.Secret.from_name("wandb-secret", required=False)],
 )
 def train_model(
     data_path: str = "/data",
