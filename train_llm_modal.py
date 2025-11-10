@@ -214,9 +214,7 @@ def train_model(
         "model": model,
         "args": training_args,
         "train_dataset": train_dataset,
-        "processing_class": tokenizer,  # Changed from 'tokenizer'
-        "max_seq_length": TRAINING_CONFIG["max_seq_length"],
-        "packing": False,
+        "processing_class": tokenizer,
     }
 
     if len(eval_dataset) > 0:
