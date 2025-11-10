@@ -34,7 +34,7 @@ volume = modal.Volume.from_name("puzzle-llm-models", create_if_missing=True)
 
 # Training configuration
 TRAINING_CONFIG = {
-    "model_name": "meta-llama/Llama-3.2-1B",  # Can change to other models
+    "model_name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # Ungated model (no HF auth needed)
     "max_seq_length": 512,
     "num_train_epochs": 3,
     "per_device_train_batch_size": 4,
