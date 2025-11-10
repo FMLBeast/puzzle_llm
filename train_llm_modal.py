@@ -154,10 +154,19 @@ def train_model(
 
     # Load datasets
     print("📚 Loading datasets...")
+
+    # Debug: Check what files exist
+    import os as check_os
+    print(f"  Files in {data_path}:")
+    for item in check_os.listdir(data_path):
+        print(f"    - {item}")
+
     try:
         train_dataset = load_from_disk(f"{data_path}/train_dataset")
         eval_dataset = load_from_disk(f"{data_path}/val_dataset")
-    except:
+        print(f"  Loaded from disk format")
+    except Exception as e:
+        print(f"  Disk format failed ({e}), trying JSON...")
         # Fallback: try loading from JSON
         from datasets import Dataset
         import json
@@ -168,7 +177,7 @@ def train_model(
             eval_data = json.load(f)
 
         train_dataset = Dataset.from_list(train_data)
-        eval_dataset = Dataset.from_list(eval_data)
+        eval_dataset = Dataset.from_list(eval_data) if len(eval_data) > 0 else Dataset.from_list([{"text": "dummy"}])  # Dummy if empty
 
     print(f"✅ Loaded {len(train_dataset)} training examples")
     print(f"✅ Loaded {len(eval_dataset)} validation examples")
@@ -185,9 +194,9 @@ def train_model(
         logging_steps=TRAINING_CONFIG["logging_steps"],
         save_steps=TRAINING_CONFIG["save_steps"],
         eval_steps=TRAINING_CONFIG["eval_steps"],
-        evaluation_strategy="steps",
+        eval_strategy="steps" if len(eval_dataset) > 0 else "no",  # Fixed API name
         save_strategy="steps",
-        load_best_model_at_end=True,
+        load_best_model_at_end=True if len(eval_dataset) > 0 else False,
         fp16=True,
         gradient_checkpointing=True,
         optim="paged_adamw_32bit",
@@ -199,16 +208,25 @@ def train_model(
 
     # Initialize trainer
     print("🎯 Initializing trainer...")
-    trainer = SFTTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        tokenizer=tokenizer,
-        dataset_text_field="text",
-        max_seq_length=TRAINING_CONFIG["max_seq_length"],
-        packing=False,
-    )
+
+    # Only include eval_dataset if it's not empty
+    trainer_kwargs = {
+        "model": model,
+        "args": training_args,
+        "train_dataset": train_dataset,
+        "tokenizer": tokenizer,
+        "dataset_text_field": "text",
+        "max_seq_length": TRAINING_CONFIG["max_seq_length"],
+        "packing": False,
+    }
+
+    if len(eval_dataset) > 0:
+        trainer_kwargs["eval_dataset"] = eval_dataset
+        print(f"  Including validation dataset ({len(eval_dataset)} examples)")
+    else:
+        print(f"  ⚠️  No validation data - training without evaluation")
+
+    trainer = SFTTrainer(**trainer_kwargs)
 
     # Train!
     print("🔥 Starting training...")
