@@ -429,13 +429,20 @@ Technique: constraint_satisfaction""",
     print(f"  ✓ Added technique examples")
     print(f"\n📊 Total examples: {len(all_examples)}")
 
-    # Split into train/val/test
+    # Split into train/val/test with minimum 1 example each
     random.seed(42)
     random.shuffle(all_examples)
 
     n = len(all_examples)
-    train_size = int(0.8 * n)
-    val_size = int(0.1 * n)
+
+    # Ensure at least 1 example in val and test
+    if n < 3:
+        raise ValueError(f"Need at least 3 examples, got {n}")
+
+    # Reserve 1 for test, 1 for val, rest for train
+    test_size = max(1, int(0.1 * n))
+    val_size = max(1, int(0.1 * n))
+    train_size = n - val_size - test_size
 
     train_data = all_examples[:train_size]
     val_data = all_examples[train_size:train_size + val_size]
