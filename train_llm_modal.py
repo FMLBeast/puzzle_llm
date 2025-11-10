@@ -34,7 +34,7 @@ volume = modal.Volume.from_name("puzzle-llm-models", create_if_missing=True)
 
 # Training configuration
 TRAINING_CONFIG = {
-    "model_name": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",  # Ungated model (no HF auth needed)
+    "model_name": "meta-llama/Llama-3.2-1B",  # Requires HuggingFace authentication
     "max_seq_length": 512,
     "num_train_epochs": 3,
     "per_device_train_batch_size": 4,
@@ -56,6 +56,7 @@ TRAINING_CONFIG = {
     gpu="A10G",  # Can upgrade to A100 for faster training
     volumes={"/models": volume},
     timeout=86400,  # 24 hours
+    secrets=[modal.Secret.from_name("huggingface-secret")],
 )
 def train_model(
     data_path: str = "/data",
@@ -85,6 +86,9 @@ def train_model(
     print(f"🚀 Starting training with model: {model_name}")
     print(f"📊 GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
 
+    # Get HuggingFace token from environment (set via Modal secret)
+    hf_token = os.environ.get("HF_TOKEN", None)
+
     # Initialize W&B if requested
     if use_wandb:
         import wandb
@@ -92,7 +96,7 @@ def train_model(
 
     # Load tokenizer
     print("📝 Loading tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, token=hf_token)
     tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
@@ -111,6 +115,7 @@ def train_model(
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
+        token=hf_token,
     )
 
     # Prepare model for k-bit training
