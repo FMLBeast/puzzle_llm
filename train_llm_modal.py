@@ -87,6 +87,18 @@ def train_model(
     volume.reload()
     print("🔄 Volume reloaded")
 
+    # Debug: List what's in the volume
+    import os as debug_os
+    print(f"📂 Checking volume contents...")
+    if debug_os.path.exists("/models"):
+        print(f"  /models exists: {debug_os.listdir('/models')}")
+        if debug_os.path.exists("/models/data"):
+            print(f"  /models/data exists: {debug_os.listdir('/models/data')}")
+        else:
+            print("  /models/data does NOT exist!")
+    else:
+        print("  /models does NOT exist!")
+
     print(f"🚀 Starting training with model: {model_name}")
     print(f"📊 GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
 
@@ -280,13 +292,30 @@ def upload_data(local_path: str):
     dest.mkdir(exist_ok=True, parents=True)
 
     # Copy files to volume
+    files_copied = []
     for file in source.rglob("*"):
         if file.is_file():
             rel_path = file.relative_to(source)
             dest_file = dest / rel_path
             dest_file.parent.mkdir(exist_ok=True, parents=True)
             shutil.copy2(file, dest_file)
+            files_copied.append(str(rel_path))
+            print(f"  📄 Copied: {rel_path}")
 
+    print(f"\n📊 Total files copied: {len(files_copied)}")
+
+    # Debug: verify files are there before commit
+    import os as debug_os
+    print(f"\n📂 Contents of /models/data before commit:")
+    for root, dirs, files in debug_os.walk("/models/data"):
+        level = root.replace("/models/data", "").count(debug_os.sep)
+        indent = " " * 2 * level
+        print(f"{indent}{debug_os.path.basename(root)}/")
+        subindent = " " * 2 * (level + 1)
+        for file in files:
+            print(f"{subindent}{file}")
+
+    print(f"\n💾 Committing volume...")
     volume.commit()
     print(f"✅ Uploaded data from {local_path} to /models/data")
 
