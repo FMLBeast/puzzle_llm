@@ -293,6 +293,19 @@ def process_and_upload_data():
 
     print("🔍 Processing puzzle data...")
 
+    # Debug: List directory structure
+    import os as debug_os
+    print("\n📂 Repository structure:")
+    for root, dirs, files in debug_os.walk("/tmp/cryptopuzzles"):
+        level = root.replace("/tmp/cryptopuzzles", "").count(debug_os.sep)
+        indent = " " * 2 * level
+        print(f"{indent}{debug_os.path.basename(root)}/")
+        subindent = " " * 2 * (level + 1)
+        for file in files[:5]:  # Show first 5 files per directory
+            print(f"{subindent}{file}")
+        if len(files) > 5:
+            print(f"{subindent}... and {len(files) - 5} more files")
+
     # Process ARweave puzzles
     arweave_dir = Path("/tmp/cryptopuzzles/ARweave")
     arweave_examples = []
@@ -346,6 +359,9 @@ def process_and_upload_data():
     # Combine all examples
     all_examples = arweave_examples + crypto_examples
     print(f"\n📊 Total examples: {len(all_examples)}")
+
+    if len(all_examples) == 0:
+        raise ValueError("No puzzle examples were processed! Check the repository structure.")
 
     # Split into train/val/test
     from random import Random
