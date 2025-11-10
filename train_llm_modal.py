@@ -214,7 +214,7 @@ def train_model(
         "model": model,
         "args": training_args,
         "train_dataset": train_dataset,
-        "tokenizer": tokenizer,
+        "processing_class": tokenizer,  # Changed from 'tokenizer'
         "dataset_text_field": "text",
         "max_seq_length": TRAINING_CONFIG["max_seq_length"],
         "packing": False,
