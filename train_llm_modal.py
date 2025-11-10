@@ -268,7 +268,7 @@ def upload_data(local_path: str):
     from pathlib import Path
 
     source = Path(local_path)
-    dest = Path("/data")
+    dest = Path("/models/data")  # Store data in the persistent volume
     dest.mkdir(exist_ok=True, parents=True)
 
     # Copy files to volume
@@ -280,7 +280,7 @@ def upload_data(local_path: str):
             shutil.copy2(file, dest_file)
 
     volume.commit()
-    print(f"✅ Uploaded data from {local_path} to /data")
+    print(f"✅ Uploaded data from {local_path} to /models/data")
 
 
 @app.local_entrypoint()
@@ -306,7 +306,7 @@ def main(
     elif command == "train":
         print(f"🚀 Starting training job...")
         result = train_model.remote(
-            data_path="/data",
+            data_path="/models/data",
             model_name=model_name,
             use_wandb=False,
         )
