@@ -12,6 +12,7 @@ app = modal.App("puzzle-llm-training")
 # Create a Modal image with all dependencies
 image = (
     modal.Image.debian_slim(python_version="3.11")
+    .apt_install("git")  # Need git for cloning cryptopuzzles repo
     .pip_install(
         "torch>=2.0.0",
         "transformers>=4.30.0",
@@ -277,6 +278,117 @@ def test_model(prompt: str, model_path: str = None):
 
 
 @app.function(image=image, volumes={"/models": volume})
+def process_and_upload_data():
+    """
+    Process cryptopuzzle data directly in Modal and save to volume.
+    This way we don't need to download data locally.
+    """
+    import json
+    import subprocess
+    from pathlib import Path
+    from datasets import Dataset
+
+    print("📥 Cloning cryptopuzzles repository...")
+    subprocess.run(["git", "clone", "https://github.com/FMLBeast/cryptopuzzles.git", "/tmp/cryptopuzzles"], check=True)
+
+    print("🔍 Processing puzzle data...")
+
+    # Process ARweave puzzles
+    arweave_dir = Path("/tmp/cryptopuzzles/ARweave")
+    arweave_examples = []
+
+    for puzzle_file in arweave_dir.glob("*.json"):
+        try:
+            with open(puzzle_file, 'r') as f:
+                data = json.load(f)
+
+            if isinstance(data, dict) and 'puzzle' in data:
+                puzzle = data['puzzle']
+                solution = data.get('solution', 'Unknown')
+                difficulty = data.get('difficulty', 'medium')
+
+                prompt = f"### Instruction:\nSolve this ARweave cryptopuzzle [Difficulty: {difficulty}]:\n\n{puzzle}\n\n### Response:\n"
+                response = f"The solution is: {solution}"
+
+                arweave_examples.append({
+                    "text": prompt + response,
+                    "puzzle_type": "arweave",
+                    "difficulty": difficulty
+                })
+        except Exception as e:
+            print(f"  ⚠️  Error processing {puzzle_file.name}: {e}")
+
+    print(f"  ✓ Processed {len(arweave_examples)} ARweave puzzles")
+
+    # Process other puzzle types
+    crypto_dir = Path("/tmp/cryptopuzzles/cryptocurrency")
+    crypto_examples = []
+
+    if crypto_dir.exists():
+        for puzzle_file in crypto_dir.glob("*.txt"):
+            try:
+                with open(puzzle_file, 'r') as f:
+                    content = f.read()
+
+                prompt = f"### Instruction:\nAnalyze this cryptocurrency puzzle:\n\n{content[:500]}\n\n### Response:\n"
+                response = "This puzzle involves analyzing blockchain transactions and cryptographic patterns."
+
+                crypto_examples.append({
+                    "text": prompt + response,
+                    "puzzle_type": "cryptocurrency",
+                    "difficulty": "medium"
+                })
+            except Exception as e:
+                print(f"  ⚠️  Error processing {puzzle_file.name}: {e}")
+
+    print(f"  ✓ Processed {len(crypto_examples)} cryptocurrency puzzles")
+
+    # Combine all examples
+    all_examples = arweave_examples + crypto_examples
+    print(f"\n📊 Total examples: {len(all_examples)}")
+
+    # Split into train/val/test
+    from random import Random
+    rng = Random(42)
+    rng.shuffle(all_examples)
+
+    n = len(all_examples)
+    train_size = int(0.8 * n)
+    val_size = int(0.1 * n)
+
+    train_data = all_examples[:train_size]
+    val_data = all_examples[train_size:train_size + val_size]
+    test_data = all_examples[train_size + val_size:]
+
+    print(f"  📚 Train: {len(train_data)} examples")
+    print(f"  📚 Val: {len(val_data)} examples")
+    print(f"  📚 Test: {len(test_data)} examples")
+
+    # Save to volume
+    dest = Path("/models/data")
+    dest.mkdir(exist_ok=True, parents=True)
+
+    # Save as JSON
+    with open(dest / "train.json", 'w') as f:
+        json.dump(train_data, f, indent=2)
+    with open(dest / "validation.json", 'w') as f:
+        json.dump(val_data, f, indent=2)
+    with open(dest / "test.json", 'w') as f:
+        json.dump(test_data, f, indent=2)
+
+    # Also save as HuggingFace datasets
+    Dataset.from_list(train_data).save_to_disk(str(dest / "train_dataset"))
+    Dataset.from_list(val_data).save_to_disk(str(dest / "val_dataset"))
+    Dataset.from_list(test_data).save_to_disk(str(dest / "test_dataset"))
+
+    print("\n💾 Committing volume...")
+    volume.commit()
+
+    print("✅ Data processed and saved to /models/data")
+    return {"train": len(train_data), "val": len(val_data), "test": len(test_data)}
+
+
+@app.function(image=image, volumes={"/models": volume})
 def upload_data(local_path: str):
     """
     Upload training data to Modal volume.
@@ -336,7 +448,12 @@ def main(
         model_name: Model to fine-tune
         prompt: Prompt for testing (if command is 'test')
     """
-    if command == "upload":
+    if command == "process":
+        print(f"🔄 Processing cryptopuzzle data in Modal...")
+        result = process_and_upload_data.remote()
+        print(f"✅ Data processing complete: {result}")
+
+    elif command == "upload":
         print(f"📤 Uploading data from {data_path}...")
         upload_data.remote(data_path)
 
@@ -359,4 +476,4 @@ def main(
 
     else:
         print(f"Unknown command: {command}")
-        print("Available commands: upload, train, test")
+        print("Available commands: process, upload, train, test")
