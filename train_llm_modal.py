@@ -34,10 +34,10 @@ volume = modal.Volume.from_name("puzzle-llm-models", create_if_missing=True)
 
 # Training configuration
 TRAINING_CONFIG = {
-    "model_name": "meta-llama/Llama-3.2-1B",  # Requires HuggingFace authentication
+    "model_name": "mistralai/Mistral-7B-v0.1",  # Better quality (7B), already approved!
     "max_seq_length": 512,
     "num_train_epochs": 3,
-    "per_device_train_batch_size": 4,
+    "per_device_train_batch_size": 2,  # Reduced for larger 7B model
     "gradient_accumulation_steps": 4,
     "learning_rate": 2e-4,
     "warmup_steps": 100,
