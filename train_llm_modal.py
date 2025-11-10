@@ -83,6 +83,10 @@ def train_model(
     from datasets import load_from_disk, load_dataset
     import os
 
+    # Reload volume to see data uploaded in previous function call
+    volume.reload()
+    print("🔄 Volume reloaded")
+
     print(f"🚀 Starting training with model: {model_name}")
     print(f"📊 GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
 
@@ -225,6 +229,10 @@ def test_model(prompt: str, model_path: str = None):
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
     from peft import PeftModel
+
+    # Reload volume to see trained model
+    volume.reload()
+    print("🔄 Volume reloaded")
 
     if model_path is None:
         model_path = f"{TRAINING_CONFIG['output_dir']}/final"
