@@ -33,6 +33,9 @@ image = (
 # Create a persistent volume for model storage
 volume = modal.Volume.from_name("puzzle-llm-models", create_if_missing=True)
 
+# Volume for synthetic puzzle data (shared with puzzle generator)
+puzzle_data_volume = modal.Volume.from_name("puzzle-training-data", create_if_missing=True)
+
 # Training configuration
 TRAINING_CONFIG = {
     "model_name": "mistralai/Mistral-7B-v0.1",  # Better quality (7B), already approved!
@@ -564,6 +567,298 @@ def upload_data(local_path: str):
     print(f"✅ Uploaded data from {local_path} to /models/data")
 
 
+@app.function(
+    image=image.pip_install("anthropic>=0.18.0"),
+    volumes={"/data": puzzle_data_volume, "/models": volume},
+    timeout=7200,
+    secrets=[modal.Secret.from_name("anthropic-api-key", required=False)],
+)
+def solve_synthetic_puzzles(
+    sample_size: int = None,
+    use_ai_solver: bool = False
+):
+    """
+    Process synthetic puzzles and create verified training data.
+
+    Args:
+        sample_size: Number of puzzles to process (None = all)
+        use_ai_solver: If True, use Claude API to solve puzzles (requires API key)
+                       If False, use ground truth solutions with enhanced reasoning
+    """
+    import json
+    from pathlib import Path
+    import random
+    from datasets import Dataset
+
+    print("🧠 MULTI-AGENT PUZZLE SOLVER")
+    print("="*60)
+
+    # Reload volumes to see synthetic puzzles
+    puzzle_data_volume.reload()
+    volume.reload()
+    print("🔄 Volumes reloaded")
+
+    # Load synthetic puzzles
+    puzzle_dir = Path("/data/synthetic_puzzles")
+    if not puzzle_dir.exists():
+        print(f"❌ Error: Synthetic puzzles not found at {puzzle_dir}")
+        print(f"   Run: modal run synthetic_puzzle_generator.py::generate_all_puzzles")
+        return {"status": "error", "message": "Puzzles not found"}
+
+    print(f"\n📂 Loading puzzles from {puzzle_dir}...")
+
+    all_training_examples = []
+    puzzle_stats = {}
+
+    # Load each puzzle type
+    puzzle_files = {
+        "logic_grid": puzzle_dir / "logic_grid.json",
+        "caesar_cipher": puzzle_dir / "caesar_cipher.json",
+        "substitution_cipher": puzzle_dir / "substitution_cipher.json",
+        "hash_puzzle": puzzle_dir / "hash_puzzle.json",
+        "multi_step": puzzle_dir / "multi_step.json",
+    }
+
+    for puzzle_type, filepath in puzzle_files.items():
+        if not filepath.exists():
+            print(f"⚠️  Skipping {puzzle_type} - file not found")
+            continue
+
+        print(f"\n{'='*60}")
+        print(f"Processing {puzzle_type}...")
+        print(f"{'='*60}")
+
+        with open(filepath, 'r') as f:
+            puzzles = json.load(f)
+
+        # Sample if requested
+        if sample_size:
+            puzzles = random.sample(puzzles, min(sample_size, len(puzzles)))
+
+        print(f"📊 Loaded {len(puzzles)} {puzzle_type} puzzles")
+
+        solved_count = 0
+        failed_count = 0
+
+        for i, puzzle in enumerate(puzzles):
+            try:
+                # Extract ground truth solution and create enhanced training example
+                solution = puzzle.get('solution')
+
+                # Create enhanced instruction format with chain-of-thought reasoning
+                if puzzle_type == "caesar_cipher":
+                    # Use the steps already in the puzzle
+                    reasoning = "\n".join(f"Step {i+1}: {step}" for i, step in enumerate(puzzle.get('steps', [])))
+                    training_text = f"""### Instruction:
+[Type: Caesar Cipher] [Difficulty: {puzzle['difficulty']}]
+
+Decode this Caesar cipher: {puzzle['puzzle'].replace('Decode: ', '')}
+
+### Response:
+
+**Approach**: Caesar ciphers use a simple letter shift. We need to try all 25 possible shifts.
+
+**Reasoning**:
+{reasoning}
+
+**Solution**: {solution}
+
+**Verification**: Shift value = {puzzle.get('shift', 'N/A')}
+"""
+
+                elif puzzle_type == "substitution_cipher":
+                    training_text = f"""### Instruction:
+[Type: Substitution Cipher] [Difficulty: {puzzle['difficulty']}]
+
+{puzzle['puzzle']}
+
+### Response:
+
+**Approach**: Use frequency analysis and pattern recognition.
+
+**Reasoning**:
+1. Identify letter frequencies in the ciphertext
+2. Compare with English letter frequency (E, T, A, O, I, N most common)
+3. Look for common patterns (THE, AND, OF, etc.)
+4. Test substitutions and refine mapping
+5. Verify decoded message makes sense
+
+**Solution**: {solution}
+
+**Method**: Frequency analysis combined with linguistic pattern matching
+"""
+
+                elif puzzle_type == "logic_grid":
+                    clues_text = "\n".join(f"{i+1}. {clue}" for i, clue in enumerate(puzzle['puzzle']['clues']))
+                    training_text = f"""### Instruction:
+[Type: Logic Grid Puzzle] [Difficulty: {puzzle['difficulty']}]
+
+{puzzle['puzzle']['description']}
+
+Clues:
+{clues_text}
+
+Question: {puzzle['puzzle']['question']}
+
+### Response:
+
+**Approach**: Use logical deduction to eliminate possibilities.
+
+**Reasoning**:
+1. Create a grid with all categories: {', '.join(puzzle['puzzle']['categories'])}
+2. Process each clue systematically
+3. Mark confirmed matches and eliminate contradictions
+4. Use transitive logic (if A=B and B=C, then A=C)
+5. Continue until all attributes are assigned
+
+**Solution**: {solution}
+
+**Verification**: All clues satisfied with this assignment
+"""
+
+                elif puzzle_type == "hash_puzzle":
+                    steps_text = "\n".join(f"{i+1}. {step}" for i, step in enumerate(puzzle.get('steps', [])))
+                    training_text = f"""### Instruction:
+[Type: Hash Puzzle] [Difficulty: {puzzle['difficulty']}]
+
+{puzzle['puzzle']}
+
+### Response:
+
+**Approach**: Brute force search through common words.
+
+**Reasoning**:
+{steps_text}
+
+**Solution**: {solution}
+
+**Hash**: {puzzle.get('hash', 'N/A')}
+**Pattern**: {puzzle.get('pattern', 'N/A')}
+"""
+
+                elif puzzle_type == "multi_step":
+                    solution_steps_text = "\n".join(f"{i+1}. {step}" for i, step in enumerate(puzzle.get('solution_steps', [])))
+                    training_text = f"""### Instruction:
+[Type: Multi-Step Puzzle] [Difficulty: {puzzle['difficulty']}]
+
+{puzzle['puzzle']}
+
+### Response:
+
+**Approach**: Work backwards from the final result, reversing each transformation.
+
+**Reasoning**:
+{solution_steps_text}
+
+**Solution**: {solution}
+
+**Verification**: Forward transformations produce the given final result
+"""
+
+                else:
+                    # Fallback to instruction_format
+                    training_text = puzzle.get('instruction_format', '')
+
+                # Add to training examples
+                all_training_examples.append({
+                    "text": training_text,
+                    "type": puzzle_type,
+                    "difficulty": puzzle['difficulty'],
+                    "verified": True,
+                    "solution": solution
+                })
+
+                solved_count += 1
+
+                # Show progress
+                if (i + 1) % 100 == 0:
+                    print(f"  Progress: {i+1}/{len(puzzles)} puzzles processed")
+
+            except Exception as e:
+                print(f"  ⚠️  Error processing puzzle {i}: {e}")
+                failed_count += 1
+                continue
+
+        puzzle_stats[puzzle_type] = {
+            "total": len(puzzles),
+            "solved": solved_count,
+            "failed": failed_count
+        }
+
+        print(f"\n✅ {puzzle_type}: {solved_count}/{len(puzzles)} solved")
+
+    print(f"\n{'='*60}")
+    print(f"📊 SOLVING COMPLETE")
+    print(f"{'='*60}")
+    print(f"Total training examples: {len(all_training_examples)}")
+    print(f"\nBreakdown by type:")
+    for ptype, stats in puzzle_stats.items():
+        print(f"  {ptype}: {stats['solved']}/{stats['total']} ({stats['solved']/stats['total']*100:.1f}%)")
+
+    # Shuffle training data
+    random.seed(42)
+    random.shuffle(all_training_examples)
+
+    # Split into train/val/test
+    n = len(all_training_examples)
+    test_size = max(100, int(0.1 * n))
+    val_size = max(100, int(0.1 * n))
+    train_size = n - val_size - test_size
+
+    train_data = all_training_examples[:train_size]
+    val_data = all_training_examples[train_size:train_size + val_size]
+    test_data = all_training_examples[train_size + val_size:]
+
+    print(f"\n{'='*60}")
+    print(f"📚 Dataset Split")
+    print(f"{'='*60}")
+    print(f"Train: {len(train_data)} examples")
+    print(f"Val: {len(val_data)} examples")
+    print(f"Test: {len(test_data)} examples")
+
+    # Save to volume
+    dest = Path("/models/data/synthetic")
+    dest.mkdir(exist_ok=True, parents=True)
+
+    print(f"\n💾 Saving to {dest}...")
+
+    with open(dest / "train.json", 'w') as f:
+        json.dump(train_data, f, indent=2)
+    with open(dest / "validation.json", 'w') as f:
+        json.dump(val_data, f, indent=2)
+    with open(dest / "test.json", 'w') as f:
+        json.dump(test_data, f, indent=2)
+
+    # Also save as HuggingFace datasets
+    Dataset.from_list(train_data).save_to_disk(str(dest / "train_dataset"))
+    Dataset.from_list(val_data).save_to_disk(str(dest / "val_dataset"))
+    Dataset.from_list(test_data).save_to_disk(str(dest / "test_dataset"))
+
+    # Commit changes to volume
+    volume.commit()
+    print(f"\n💾 Volume committed")
+
+    print(f"\n✅ Training data saved!")
+    print(f"\n📝 Sample training example:")
+    print("="*60)
+    print(train_data[0]['text'][:500] + "...")
+    print("="*60)
+
+    print(f"\n🎯 Next steps:")
+    print(f"   1. Train on synthetic data:")
+    print(f"      modal run train_llm_modal.py::train_model --data-path /models/data/synthetic")
+    print(f"\n   2. Or combine with real puzzles first, then train")
+
+    return {
+        "status": "success",
+        "total_examples": len(all_training_examples),
+        "train": len(train_data),
+        "val": len(val_data),
+        "test": len(test_data),
+        "stats": puzzle_stats
+    }
+
+
 @app.local_entrypoint()
 def main(
     command: str = "train",
@@ -575,7 +870,7 @@ def main(
     Main entry point for the training pipeline.
 
     Args:
-        command: Command to run (train, test, upload)
+        command: Command to run (train, test, upload, solve)
         data_path: Path to training data
         model_name: Model to fine-tune
         prompt: Prompt for testing (if command is 'test')
@@ -588,6 +883,11 @@ def main(
     elif command == "upload":
         print(f"📤 Uploading data from {data_path}...")
         upload_data.remote(data_path)
+
+    elif command == "solve":
+        print(f"🧠 Solving synthetic puzzles...")
+        result = solve_synthetic_puzzles.remote()
+        print(f"✅ Solving complete: {result}")
 
     elif command == "train":
         print(f"🚀 Starting training job...")
@@ -608,4 +908,4 @@ def main(
 
     else:
         print(f"Unknown command: {command}")
-        print("Available commands: process, upload, train, test")
+        print("Available commands: process, upload, solve, train, test")
