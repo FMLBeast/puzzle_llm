@@ -30,6 +30,9 @@ image = (
     )
 )
 
+# Separate image for puzzle solver (with anthropic for optional AI solving)
+solver_image = image.pip_install("anthropic>=0.18.0")
+
 # Create a persistent volume for model storage
 volume = modal.Volume.from_name("puzzle-llm-models", create_if_missing=True)
 
