@@ -33,6 +33,9 @@ image = (
 # Create a persistent volume for model storage
 volume = modal.Volume.from_name("puzzle-llm-models", create_if_missing=True)
 
+# Reference the CTF puzzle data volume
+ctf_volume = modal.Volume.from_name("puzzle-training-data", create_if_missing=True)
+
 # Training configuration
 TRAINING_CONFIG = {
     "model_name": "mistralai/Mistral-7B-v0.1",  # Better quality (7B), already approved!
@@ -54,8 +57,8 @@ TRAINING_CONFIG = {
 
 @app.function(
     image=image,
-    gpu="A10G",  # Can upgrade to A100 for faster training
-    volumes={"/models": volume},
+    gpu="A100",  # Using A100 for $22 budget
+    volumes={"/models": volume, "/ctf_data": ctf_volume},  # Mount BOTH volumes!
     timeout=86400,  # 24 hours
     secrets=[modal.Secret.from_name("huggingface-secret")],
 )
@@ -63,6 +66,7 @@ def train_model(
     data_path: str = "/data",
     model_name: str = TRAINING_CONFIG["model_name"],
     use_wandb: bool = False,
+    use_ctf_data: bool = True,  # Include CTF puzzles by default
 ):
     """
     Train the LLM on puzzle dataset using QLoRA fine-tuning.
@@ -154,33 +158,82 @@ def train_model(
 
     # Load datasets
     print("📚 Loading datasets...")
+    from datasets import Dataset, concatenate_datasets
+    import json
 
-    # Debug: Check what files exist
-    import os as check_os
-    print(f"  Files in {data_path}:")
-    for item in check_os.listdir(data_path):
-        print(f"    - {item}")
+    all_train_data = []
+    all_eval_data = []
 
-    try:
-        train_dataset = load_from_disk(f"{data_path}/train_dataset")
-        eval_dataset = load_from_disk(f"{data_path}/val_dataset")
-        print(f"  Loaded from disk format")
-    except Exception as e:
-        print(f"  Disk format failed ({e}), trying JSON...")
-        # Fallback: try loading from JSON
-        from datasets import Dataset
-        import json
+    # 1. Load CTF puzzles if enabled
+    if use_ctf_data:
+        print("\n1️⃣ Loading CTF puzzle dataset...")
+        ctf_volume.reload()
 
-        with open(f"{data_path}/train.json", 'r') as f:
-            train_data = json.load(f)
-        with open(f"{data_path}/validation.json", 'r') as f:
-            eval_data = json.load(f)
+        ctf_path = "/ctf_data/advanced_ctf_puzzles/training_format.json"
+        if os.path.exists(ctf_path):
+            with open(ctf_path, 'r') as f:
+                ctf_data = json.load(f)
 
-        train_dataset = Dataset.from_list(train_data)
-        eval_dataset = Dataset.from_list(eval_data) if len(eval_data) > 0 else Dataset.from_list([{"text": "dummy"}])  # Dummy if empty
+            print(f"  ✅ Loaded {len(ctf_data)} CTF puzzles")
 
-    print(f"✅ Loaded {len(train_dataset)} training examples")
-    print(f"✅ Loaded {len(eval_dataset)} validation examples")
+            # Split CTF data: 90% train, 10% val
+            split_idx = int(0.9 * len(ctf_data))
+            all_train_data.extend(ctf_data[:split_idx])
+            all_eval_data.extend(ctf_data[split_idx:])
+            print(f"     Train: {split_idx}, Val: {len(ctf_data) - split_idx}")
+        else:
+            print(f"  ⚠️  CTF data not found at {ctf_path}")
+
+    # 2. Load cryptopuzzles repo data
+    print("\n2️⃣ Loading cryptopuzzles repository data...")
+    crypto_data_path = "/models/data"
+
+    if os.path.exists(crypto_data_path):
+        # Check what files exist
+        print(f"  Files in {crypto_data_path}:")
+        for item in os.listdir(crypto_data_path):
+            print(f"    - {item}")
+
+        try:
+            # Try loading from saved datasets
+            if os.path.exists(f"{crypto_data_path}/train_dataset"):
+                train_ds = load_from_disk(f"{crypto_data_path}/train_dataset")
+                all_train_data.extend([ex for ex in train_ds])
+                print(f"  ✅ Loaded {len(train_ds)} crypto training examples")
+
+            if os.path.exists(f"{crypto_data_path}/val_dataset"):
+                val_ds = load_from_disk(f"{crypto_data_path}/val_dataset")
+                all_eval_data.extend([ex for ex in val_ds])
+                print(f"  ✅ Loaded {len(val_ds)} crypto validation examples")
+        except Exception as e:
+            print(f"  Disk format failed ({e}), trying JSON...")
+
+            # Try JSON format
+            if os.path.exists(f"{crypto_data_path}/train.json"):
+                with open(f"{crypto_data_path}/train.json", 'r') as f:
+                    crypto_train = json.load(f)
+                all_train_data.extend(crypto_train)
+                print(f"  ✅ Loaded {len(crypto_train)} crypto training examples from JSON")
+
+            if os.path.exists(f"{crypto_data_path}/validation.json"):
+                with open(f"{crypto_data_path}/validation.json", 'r') as f:
+                    crypto_val = json.load(f)
+                all_eval_data.extend(crypto_val)
+                print(f"  ✅ Loaded {len(crypto_val)} crypto validation examples from JSON")
+    else:
+        print(f"  ⚠️  Crypto data not found at {crypto_data_path}")
+
+    # 3. Create final combined datasets
+    print(f"\n3️⃣ Creating combined dataset...")
+    train_dataset = Dataset.from_list(all_train_data) if all_train_data else None
+    eval_dataset = Dataset.from_list(all_eval_data) if all_eval_data else None
+
+    if train_dataset is None:
+        raise ValueError("No training data found! Run process command first.")
+
+    print(f"\n✅ COMBINED DATASET:")
+    print(f"   Training: {len(train_dataset)} examples")
+    print(f"   Validation: {len(eval_dataset) if eval_dataset else 0} examples")
 
     # Training arguments
     training_args = TrainingArguments(
@@ -194,9 +247,9 @@ def train_model(
         logging_steps=TRAINING_CONFIG["logging_steps"],
         save_steps=TRAINING_CONFIG["save_steps"],
         eval_steps=TRAINING_CONFIG["eval_steps"],
-        eval_strategy="steps" if len(eval_dataset) > 0 else "no",  # Fixed API name
+        eval_strategy="steps" if (eval_dataset and len(eval_dataset) > 0) else "no",  # Fixed API name
         save_strategy="steps",
-        load_best_model_at_end=True if len(eval_dataset) > 0 else False,
+        load_best_model_at_end=True if (eval_dataset and len(eval_dataset) > 0) else False,
         fp16=True,
         gradient_checkpointing=True,
         optim="paged_adamw_32bit",
@@ -217,7 +270,7 @@ def train_model(
         "processing_class": tokenizer,
     }
 
-    if len(eval_dataset) > 0:
+    if eval_dataset and len(eval_dataset) > 0:
         trainer_kwargs["eval_dataset"] = eval_dataset
         print(f"  Including validation dataset ({len(eval_dataset)} examples)")
     else:
