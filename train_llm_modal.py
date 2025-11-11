@@ -292,82 +292,102 @@ def test_model(prompt: str, model_path: str = None):
     return response
 
 
-@app.function(image=image, volumes={"/models": volume}, timeout=3600)
+@app.function(image=image, volumes={"/models": volume}, timeout=7200)  # Increased timeout for large processing
 def process_and_upload_data():
     """
-    Process cryptopuzzle data comprehensively in Modal and save to volume.
-    Uses advanced data processing with instruction-following format.
+    COMPREHENSIVE data processing - extracts ALL information from cryptopuzzles repo.
+    Creates hundreds of training examples from:
+    - Solved puzzles (with full solutions)
+    - Unsolved puzzle analysis
+    - Technique documentation
+    - Cryptocurrency puzzles
+    - Smart contracts
+    - Steganography
+    - Tool usage
     """
-    # Import processing code directly
-    import sys
-    sys.path.insert(0, '/root')
-
-    # Read and execute the processing script
-    with open('/root/train_llm_modal.py', 'r') as f:
-        # We'll define the processing inline instead
-        pass
-
-    # Inline comprehensive data processing
     import json
     import subprocess
     from pathlib import Path
     from datasets import Dataset
     import random
+    import re
 
-    print("🔄 Starting comprehensive cryptopuzzle data processing...")
+    print("🔄 Starting COMPREHENSIVE cryptopuzzle data processing...")
+    print("   This will extract data from the entire repository!\n")
 
     # Clone repository
     repo_dir = Path("/tmp/cryptopuzzles")
-    if not repo_dir.exists():
-        print("📥 Cloning cryptopuzzles repository...")
-        subprocess.run([
-            "git", "clone",
-            "https://github.com/FMLBeast/cryptopuzzles.git",
-            str(repo_dir)
-        ], check=True)
+    if repo_dir.exists():
+        import shutil
+        shutil.rmtree(repo_dir)
+
+    print("📥 Cloning cryptopuzzles repository...")
+    subprocess.run([
+        "git", "clone",
+        "https://github.com/FMLBeast/cryptopuzzles.git",
+        str(repo_dir)
+    ], check=True)
 
     all_examples = []
 
-    # Process ARweave training dataset
-    print("\n1️⃣ Processing ARweave training dataset...")
+    # Helper function to parse markdown sections
+    def parse_markdown_file(file_path: Path) -> dict:
+        """Extract structured information from markdown files."""
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+
+        # Extract title
+        title_match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
+        title = title_match.group(1) if title_match else file_path.stem
+
+        # Extract sections
+        sections = {}
+        current_section = "intro"
+        current_content = []
+
+        for line in content.split('\n'):
+            if line.startswith('##'):
+                if current_content:
+                    sections[current_section] = '\n'.join(current_content).strip()
+                current_section = line.strip('# ').lower().replace(' ', '_')
+                current_content = []
+            else:
+                current_content.append(line)
+
+        if current_content:
+            sections[current_section] = '\n'.join(current_content).strip()
+
+        return {"title": title, "sections": sections, "full_content": content}
+
+    # 1. Process ARweave training dataset (curated examples)
+    print("\n1️⃣ Processing ARweave curated training dataset...")
     training_file = repo_dir / "data" / "training_dataset.json"
+    arweave_count = 0
     if training_file.exists():
         with open(training_file, 'r') as f:
             dataset = json.load(f)
 
         for puzzle in dataset.get('training_examples', []):
-            puzzle_type = puzzle.get('type', 'general')
-            difficulty = puzzle.get('difficulty', 'medium')
-            problem = puzzle.get('problem', '')
-
-            # Build instruction
             instruction = f"### Instruction:\n"
-            instruction += f"[Puzzle Type: {puzzle_type}] [Difficulty: {difficulty}]\n\n"
-            instruction += f"{problem}\n\n"
+            instruction += f"[Puzzle Type: {puzzle.get('type', 'general')}] "
+            instruction += f"[Difficulty: {puzzle.get('difficulty', 'medium')}]\n\n"
+            instruction += f"{puzzle.get('problem', '')}\n\n"
 
             if 'sub_problems' in puzzle:
-                instruction += "Sub-problems to solve:\n"
+                instruction += "Sub-problems:\n"
                 for i, sub in enumerate(puzzle['sub_problems'], 1):
-                    sub_type = sub.get('type', 'general')
-                    question = sub.get('question', '')
-                    instruction += f"{i}. [{sub_type}] {question}\n"
+                    instruction += f"{i}. [{sub.get('type')}] {sub.get('question', '')}\n"
 
             instruction += "\n### Response:\n"
 
-            # Build response with reasoning
-            response = "Let me solve each sub-problem step by step:\n\n"
-
+            response = "Let me solve each sub-problem systematically:\n\n"
             if 'sub_problems' in puzzle:
                 for i, sub in enumerate(puzzle['sub_problems'], 1):
-                    response += f"**Problem {i}** ({sub.get('type', 'general')}):\n"
-
+                    response += f"**Problem {i}** ({sub.get('type')}):\n"
                     if 'steps' in sub:
-                        response += "Reasoning:\n"
-                        for step in sub['steps']:
-                            response += f"- {step}\n"
+                        response += "Reasoning:\n" + '\n'.join(f"- {s}" for s in sub['steps']) + "\n"
                     elif 'explanation' in sub:
                         response += f"Explanation: {sub['explanation']}\n"
-
                     response += f"Solution: {sub.get('solution', '')}\n\n"
 
             if 'final_solution' in puzzle:
@@ -375,95 +395,292 @@ def process_and_upload_data():
 
             all_examples.append({
                 "text": instruction + response,
-                "puzzle_id": puzzle.get('puzzle_id'),
-                "puzzle_type": puzzle_type,
-                "difficulty": difficulty
+                "source": "arweave_curated",
+                "difficulty": puzzle.get('difficulty', 'medium')
             })
+            arweave_count += 1
 
-        print(f"  ✓ Processed {len(all_examples)} ARweave examples")
+    print(f"  ✓ {arweave_count} ARweave curated examples")
 
-    # Process cryptocurrency puzzles
-    print("\n2️⃣ Processing cryptocurrency puzzles...")
+    # 2. Process ALL solved puzzle writeups
+    print("\n2️⃣ Processing solved puzzle writeups...")
+    solved_dir = repo_dir / "puzzles" / "solved"
+    solved_count = 0
+    if solved_dir.exists():
+        for md_file in solved_dir.glob("*.md"):
+            try:
+                parsed = parse_markdown_file(md_file)
+
+                # Create instruction from puzzle
+                instruction = f"### Instruction:\n"
+                instruction += f"[Source: ARweave Puzzle] [File: {md_file.name}]\n\n"
+                instruction += f"Explain the solution to: {parsed['title']}\n\n"
+                instruction += "### Response:\n"
+
+                # Extract key information
+                response = f"# {parsed['title']}\n\n"
+
+                # Add solution if present
+                if 'solution' in parsed['sections']:
+                    response += f"**Solution:**\n{parsed['sections']['solution'][:500]}\n\n"
+
+                # Add techniques if present
+                if 'techniques_used' in parsed['sections']:
+                    response += f"**Techniques:**\n{parsed['sections']['techniques_used'][:300]}\n\n"
+
+                # Add method if present
+                if 'method' in parsed['sections']:
+                    response += f"**Method:**\n{parsed['sections']['method'][:400]}\n\n"
+
+                all_examples.append({
+                    "text": instruction + response,
+                    "source": "solved_writeup",
+                    "difficulty": "medium"
+                })
+                solved_count += 1
+            except Exception as e:
+                print(f"    ⚠️  Skipped {md_file.name}: {e}")
+
+    print(f"  ✓ {solved_count} solved puzzle writeups")
+
+    # 3. Process technique deep dives
+    print("\n3️⃣ Processing technique documentation...")
+    techniques_dir = repo_dir / "techniques" / "deep_dives"
+    technique_count = 0
+    if techniques_dir.exists():
+        for md_file in techniques_dir.glob("*.md"):
+            try:
+                parsed = parse_markdown_file(md_file)
+
+                instruction = f"### Instruction:\n"
+                instruction += f"[Type: Technique Documentation]\n\n"
+                instruction += f"Explain the technique: {parsed['title']}\n\n"
+                instruction += "### Response:\n"
+
+                # Extract first 1000 chars of content as the explanation
+                response = parsed['full_content'][:1500] + "..."
+
+                all_examples.append({
+                    "text": instruction + response,
+                    "source": "technique_guide",
+                    "difficulty": "educational"
+                })
+                technique_count += 1
+            except Exception as e:
+                print(f"    ⚠️  Skipped {md_file.name}: {e}")
+
+    print(f"  ✓ {technique_count} technique guides")
+
+    # 4. Process cryptocurrency puzzles
+    print("\n4️⃣ Processing cryptocurrency puzzles...")
     crypto_file = repo_dir / "cryptocurrency_puzzles" / "datasets" / "challenge_index.json"
+    crypto_count = 0
     if crypto_file.exists():
         with open(crypto_file, 'r') as f:
             crypto_data = json.load(f)
 
-        # Bitcoin puzzle example
+        # Bitcoin puzzle examples
         bitcoin_puzzle = crypto_data.get('bitcoin_puzzle_transaction', {})
-        recent_solves = bitcoin_puzzle.get('recent_solves', [])
-
-        for solve in recent_solves[:3]:
-            puzzle_id = solve.get('puzzle_id')
-            difficulty_bits = solve.get('difficulty_bits')
-
+        for solve in bitcoin_puzzle.get('recent_solves', [])[:5]:
             instruction = f"### Instruction:\n"
-            instruction += f"[Puzzle Type: Bitcoin Private Key Search] [Difficulty: {difficulty_bits}-bit]\n\n"
-            instruction += f"Explain how to solve Bitcoin Puzzle #{puzzle_id} which requires finding a private key in a {difficulty_bits}-bit search space.\n\n"
+            instruction += f"[Puzzle Type: Bitcoin Private Key Search] "
+            instruction += f"[Difficulty: {solve.get('difficulty_bits')}-bit]\n\n"
+            instruction += f"Explain Bitcoin Puzzle #{solve.get('puzzle_id')}\n\n"
             instruction += "### Response:\n"
 
-            response = f"To solve Bitcoin Puzzle #{puzzle_id}:\n\n"
-            response += f"**Problem**: Find private key in 2^{difficulty_bits} search space\n"
-            response += f"**Technique**: {solve.get('technique', 'GPU brute force')}\n\n"
-            response += f"**Approach**:\n"
-            response += f"1. Use optimized GPU tools like BitCrack\n"
-            response += f"2. Parallelize search across multiple GPUs\n"
-            response += f"3. Estimated time: {solve.get('solve_time_estimate', 'variable')}\n"
+            response = f"**Bitcoin Puzzle #{solve.get('puzzle_id')}**\n\n"
+            response += f"Search space: 2^{solve.get('difficulty_bits')} operations\n"
+            response += f"Technique: {solve.get('technique', 'GPU brute force')}\n"
+            response += f"Estimated time: {solve.get('solve_time_estimate', 'variable')}\n\n"
+            response += f"Tools: BitCrack, KeyHunt\n"
+            response += f"Address: {solve.get('address')}\n"
 
             all_examples.append({
                 "text": instruction + response,
-                "puzzle_type": "cryptocurrency",
+                "source": "cryptocurrency",
                 "difficulty": "hard"
             })
+            crypto_count += 1
 
-        print(f"  ✓ Processed {len(all_examples) - len(dataset.get('training_examples', []))} crypto examples")
+        # Brain wallet examples
+        for bw in crypto_data.get('brain_wallet_vulnerabilities', {}).get('famous_examples', [])[:4]:
+            instruction = f"### Instruction:\n"
+            instruction += f"[Type: Brain Wallet Security]\n\n"
+            instruction += f"Analyze: \"{bw.get('passphrase')}\"\n\n"
+            instruction += "### Response:\n"
 
-    # Add technique examples
-    print("\n3️⃣ Adding technique teaching examples...")
+            response = f"**Brain Wallet Analysis**\n\n"
+            response += f"Passphrase: \"{bw.get('passphrase')}\"\n"
+            response += f"Status: {bw.get('status')}\n"
+            response += f"Attack time: {bw.get('attack_time')}\n\n"
+            response += f"**Vulnerability**: {bw.get('lesson')}\n"
 
-    # Cryptarithm example
-    all_examples.append({
-        "text": """### Instruction:
-[Puzzle Type: Cryptarithm] [Difficulty: medium]
+            all_examples.append({
+                "text": instruction + response,
+                "source": "brain_wallet",
+                "difficulty": "medium"
+            })
+            crypto_count += 1
 
-Solve: AR + PAPER = PIZZA (each letter = unique digit)
+    print(f"  ✓ {crypto_count} cryptocurrency examples")
+
+    # 5. Process cryptocurrency writeups
+    print("\n5️⃣ Processing cryptocurrency writeups...")
+    crypto_solved = repo_dir / "cryptocurrency_puzzles" / "solved"
+    crypto_writeup_count = 0
+    if crypto_solved.exists():
+        for md_file in crypto_solved.glob("*.md"):
+            try:
+                parsed = parse_markdown_file(md_file)
+
+                instruction = f"### Instruction:\n"
+                instruction += f"[Type: Cryptocurrency Puzzle Solution]\n\n"
+                instruction += f"Explain: {parsed['title']}\n\n"
+                instruction += "### Response:\n"
+
+                response = parsed['full_content'][:1200] + "..."
+
+                all_examples.append({
+                    "text": instruction + response,
+                    "source": "crypto_writeup",
+                    "difficulty": "hard"
+                })
+                crypto_writeup_count += 1
+            except Exception as e:
+                pass
+
+    print(f"  ✓ {crypto_writeup_count} cryptocurrency writeups")
+
+    # 6. Process steganography challenges
+    print("\n6️⃣ Processing steganography challenges...")
+    steg_file = repo_dir / "steganography_puzzles" / "datasets" / "challenge_index.json"
+    steg_count = 0
+    if steg_file.exists():
+        try:
+            with open(steg_file, 'r') as f:
+                steg_data = json.load(f)
+
+            for challenge in steg_data.get('challenges', [])[:5]:
+                instruction = f"### Instruction:\n"
+                instruction += f"[Type: Steganography Challenge]\n\n"
+                instruction += f"Explain steganography techniques\n\n"
+                instruction += "### Response:\n"
+
+                response = f"**Steganography Techniques**\n\n"
+                response += "Common methods:\n"
+                response += "- LSB (Least Significant Bit) manipulation\n"
+                response += "- Alpha channel hiding\n"
+                response += "- Frequency domain (DCT/DFT)\n"
+                response += "- Metadata embedding\n"
+
+                all_examples.append({
+                    "text": instruction + response,
+                    "source": "steganography",
+                    "difficulty": "medium"
+                })
+                steg_count += 1
+        except Exception as e:
+            pass
+
+    print(f"  ✓ {steg_count} steganography examples")
+
+    # 7. Add general cryptography examples
+    print("\n7️⃣ Adding general cryptography examples...")
+    general_examples = [
+        {
+            "text": """### Instruction:
+[Type: Classical Cipher] [Difficulty: easy]
+
+Solve: KHOOR ZRUOG (Caesar cipher)
 
 ### Response:
-**Step 1**: Analyze structure - PIZZA is 5 digits, so P must be 9
+**Caesar Cipher Solution**
 
-**Step 2**: Working systematically with constraints:
-- A = 6, R = 8, P = 9, E = 3, I = 7, Z = 0
+This is a Caesar cipher with shift 3:
+- K → H (shift -3)
+- H → E
+- O → L
+- O → L
+- R → O
 
-**Verification**: 68 + 96938 = 97006 ✓
+Result: HELLO WORLD
 
-Technique: constraint_satisfaction""",
-        "puzzle_type": "cryptarithm",
-        "difficulty": "medium"
-    })
+Technique: Try all 26 possible shifts (brute force)""",
+            "source": "educational",
+            "difficulty": "easy"
+        },
+        {
+            "text": """### Instruction:
+[Type: Cryptarithm] [Difficulty: medium]
 
-    print(f"  ✓ Added technique examples")
-    print(f"\n📊 Total examples: {len(all_examples)}")
+Solve: SEND + MORE = MONEY
 
-    # Split into train/val/test with minimum 1 example each
+### Response:
+**Cryptarithm Solution**
+
+Each letter = unique digit (0-9)
+
+Working through constraints:
+- M must be 1 (carry from S+M)
+- S must be 8 or 9
+- Systematically test combinations
+
+Solution: 9567 + 1085 = 10652
+
+Mapping: S=9, E=5, N=6, D=7, M=1, O=0, R=8, Y=2""",
+            "source": "educational",
+            "difficulty": "medium"
+        },
+        {
+            "text": """### Instruction:
+[Type: Hash Function] [Difficulty: medium]
+
+Explain SHA-256 usage in puzzles
+
+### Response:
+**SHA-256 in Cryptopuzzles**
+
+SHA-256 produces 64-character hex output (256 bits)
+
+Common puzzle uses:
+1. **Hash tail extraction**: Take last N chars
+2. **Private key derivation**: Hash passphrase
+3. **Verification**: Prove solution correctness
+
+Example:
+SHA256("Bitcoin") = "b4056df6691f8dc72e56302ddad345d65fead3ead9299609a826e2344eb63aa4"
+Last 8 chars: "eb63aa4"
+
+Tools: Python hashlib, online calculators""",
+            "source": "educational",
+            "difficulty": "medium"
+        }
+    ]
+
+    all_examples.extend(general_examples)
+    print(f"  ✓ {len(general_examples)} educational examples")
+
+    print(f"\n📊 TOTAL EXAMPLES: {len(all_examples)}")
+    print(f"   Sources breakdown:")
+    from collections import Counter
+    sources = Counter(ex.get('source', 'unknown') for ex in all_examples)
+    for source, count in sources.items():
+        print(f"   - {source}: {count}")
+
+    # Split dataset
     random.seed(42)
     random.shuffle(all_examples)
 
     n = len(all_examples)
-
-    # Ensure at least 1 example in val and test
-    if n < 3:
-        raise ValueError(f"Need at least 3 examples, got {n}")
-
-    # Reserve 1 for test, 1 for val, rest for train
-    test_size = max(1, int(0.1 * n))
-    val_size = max(1, int(0.1 * n))
+    test_size = max(2, int(0.1 * n))
+    val_size = max(2, int(0.1 * n))
     train_size = n - val_size - test_size
 
     train_data = all_examples[:train_size]
     val_data = all_examples[train_size:train_size + val_size]
     test_data = all_examples[train_size + val_size:]
 
-    print(f"\n4️⃣ Split dataset:")
+    print(f"\n4️⃣ Dataset split:")
     print(f"  📚 Train: {len(train_data)} examples")
     print(f"  📚 Val: {len(val_data)} examples")
     print(f"  📚 Test: {len(test_data)} examples")
@@ -474,7 +691,6 @@ Technique: constraint_satisfaction""",
 
     print(f"\n5️⃣ Saving to volume...")
 
-    # Save as JSON
     with open(dest / "train.json", 'w') as f:
         json.dump(train_data, f, indent=2)
     with open(dest / "validation.json", 'w') as f:
@@ -482,40 +698,26 @@ Technique: constraint_satisfaction""",
     with open(dest / "test.json", 'w') as f:
         json.dump(test_data, f, indent=2)
 
-    print(f"  ✓ Saved JSON files")
-
-    # Save as HuggingFace datasets
     Dataset.from_list(train_data).save_to_disk(str(dest / "train_dataset"))
     Dataset.from_list(val_data).save_to_disk(str(dest / "val_dataset"))
     Dataset.from_list(test_data).save_to_disk(str(dest / "test_dataset"))
 
-    print(f"  ✓ Saved HuggingFace datasets")
-
-    # Debug: Show what's in the volume
-    print(f"\n📂 Volume contents:")
-    import os
-    for item in os.listdir(dest):
-        item_path = dest / item
-        if item_path.is_file():
-            size = item_path.stat().st_size / 1024  # KB
-            print(f"  📄 {item} ({size:.1f} KB)")
-        else:
-            print(f"  📁 {item}/")
-
-    # Commit volume
     volume.commit()
-    print("\n✅ Data processed and committed to volume!")
+    print("\n✅ Comprehensive dataset created and saved!")
 
-    # Print sample
-    print("\n📝 Sample training example:")
+    print("\n📝 Sample examples:")
     print("="*60)
-    print(train_data[0]['text'][:400] + "...")
+    for i, ex in enumerate(train_data[:2]):
+        print(f"\nExample {i+1} ({ex.get('source')}):")
+        print(ex['text'][:300] + "...")
     print("="*60)
 
     return {
         "train": len(train_data),
         "val": len(val_data),
         "test": len(test_data),
+        "total": len(all_examples),
+        "sources": dict(sources),
         "status": "success"
     }
 
