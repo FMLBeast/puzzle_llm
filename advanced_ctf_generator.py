@@ -1328,14 +1328,70 @@ def generate_all_ctf_puzzles():
             json.dump(puzzles, f, indent=2)
         print(f"Saved: {filepath}")
 
-    # Create training format (instruction/response)
-    print("\nCreating training format...")
+    # Create training format (instruction/response) with ENHANCED REASONING
+    print("\nCreating training format with DETAILED SOLUTION REASONING...")
     training_examples = []
+
+    def enhance_solution_with_reasoning(puzzle):
+        """Transform simple answer into detailed solution with reasoning"""
+        enhanced_solution = ""
+
+        # Add solution method header
+        enhanced_solution += "**Solution Method:**\n\n"
+
+        # Step 1: Identify the challenge type
+        enhanced_solution += f"**Step 1: Identify the challenge**\n"
+        enhanced_solution += f"- Category: {puzzle.get('category', 'unknown')}\n"
+        enhanced_solution += f"- Type: {puzzle.get('type', 'unknown').replace('_', ' ').title()}\n"
+        if 'technique' in puzzle:
+            enhanced_solution += f"- Technique required: {puzzle['technique']}\n"
+        enhanced_solution += "\n"
+
+        # Step 2: Analyze the puzzle (extract from puzzle text)
+        enhanced_solution += f"**Step 2: Analyze the challenge**\n"
+        # Extract approach/technique from puzzle if present
+        if "**Approach**:" in puzzle['puzzle']:
+            approach_section = puzzle['puzzle'].split("**Approach**:")[1].split("\n\n")[0]
+            enhanced_solution += f"{approach_section}\n"
+        elif "**Technique**:" in puzzle['puzzle']:
+            tech_section = puzzle['puzzle'].split("**Technique**:")[1].split("\n\n")[0]
+            enhanced_solution += f"{tech_section}\n"
+        else:
+            enhanced_solution += f"- Read the challenge description carefully\n"
+            enhanced_solution += f"- Identify key information and constraints\n"
+        enhanced_solution += "\n"
+
+        # Step 3: Tools and methods
+        if 'tools' in puzzle:
+            enhanced_solution += f"**Step 3: Select appropriate tools**\n"
+            enhanced_solution += f"- Tools: {', '.join(puzzle['tools'])}\n"
+            enhanced_solution += "\n"
+
+        # Step 4: Include code solution if present
+        if 'code_solution' in puzzle:
+            enhanced_solution += f"**Step 4: Implementation**\n"
+            enhanced_solution += f"```python{puzzle['code_solution']}```\n\n"
+
+        # Final answer
+        enhanced_solution += f"**Final Answer:** {puzzle['solution']}\n\n"
+
+        # Add verification if applicable
+        enhanced_solution += f"**Verification:**\n"
+        enhanced_solution += f"- Confirm the answer meets all challenge requirements\n"
+        enhanced_solution += f"- Check flag format if applicable\n"
+
+        return enhanced_solution
 
     for category, puzzles in all_puzzles.items():
         for puzzle in puzzles:
-            # Format for SFTTrainer
-            text = f"### Instruction:\n{puzzle['puzzle']}\n\n### Response:\n{puzzle['solution']}"
+            # Extract just the core question (remove approach/explanation)
+            puzzle_text = puzzle['puzzle']
+
+            # Enhance solution with full reasoning
+            enhanced_solution = enhance_solution_with_reasoning(puzzle)
+
+            # Format for SFTTrainer with ENHANCED reasoning
+            text = f"### Instruction:\n{puzzle_text}\n\n### Response:\n{enhanced_solution}"
 
             training_examples.append({
                 "text": text,
