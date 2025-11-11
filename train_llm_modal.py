@@ -40,7 +40,7 @@ ctf_volume = modal.Volume.from_name("puzzle-training-data", create_if_missing=Tr
 TRAINING_CONFIG = {
     "model_name": "mistralai/Mistral-7B-v0.1",  # Better quality (7B), already approved!
     "max_seq_length": 512,
-    "num_train_epochs": 3,
+    "num_train_epochs": 5,  # Increased for better learning with improved dataset
     "per_device_train_batch_size": 2,  # Reduced for larger 7B model
     "gradient_accumulation_steps": 4,
     "learning_rate": 2e-4,
