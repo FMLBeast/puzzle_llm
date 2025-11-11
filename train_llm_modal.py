@@ -296,14 +296,7 @@ def test_model(prompt: str, model_path: str = None):
 def process_and_upload_data():
     """
     COMPREHENSIVE data processing - extracts ALL information from cryptopuzzles repo.
-    Creates hundreds of training examples from:
-    - Solved puzzles (with full solutions)
-    - Unsolved puzzle analysis
-    - Technique documentation
-    - Cryptocurrency puzzles
-    - Smart contracts
-    - Steganography
-    - Tool usage
+    Creates HUNDREDS of training examples from EVERY markdown file!
     """
     import json
     import subprocess
@@ -312,8 +305,8 @@ def process_and_upload_data():
     import random
     import re
 
-    print("🔄 Starting COMPREHENSIVE cryptopuzzle data processing...")
-    print("   This will extract data from the entire repository!\n")
+    print("🔥 Starting COMPREHENSIVE cryptopuzzle data extraction!")
+    print("   Parsing ENTIRE repository - every markdown, every puzzle!\n")
 
     # Clone repository
     repo_dir = Path("/tmp/cryptopuzzles")
@@ -330,335 +323,140 @@ def process_and_upload_data():
 
     all_examples = []
 
-    # Helper function to parse markdown sections
-    def parse_markdown_file(file_path: Path) -> dict:
-        """Extract structured information from markdown files."""
+    # Helper function to extract sub-puzzles from markdown
+    def extract_subpuzzles_from_markdown(file_path: Path, puzzle_name: str) -> list:
+        """Extract each sub-puzzle as a separate training example."""
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
 
-        # Extract title
+        examples = []
+
+        # Split by ### headers (sub-puzzles)
+        sections = re.split(r'\n###\s+', content)
+
+        for i, section in enumerate(sections[1:], 1):  # Skip first (header)
+            if len(section.strip()) < 100:  # Skip tiny sections
+                continue
+
+            lines = section.split('\n')
+            sub_title = lines[0].strip()
+            sub_content = '\n'.join(lines[1:]).strip()
+
+            # Create training example
+            instruction = f"### Instruction:\n"
+            instruction += f"[Puzzle: {puzzle_name}] [Sub-puzzle {i}: {sub_title}]\n\n"
+            instruction += f"Solve this cryptopuzzle and show your reasoning.\n\n"
+            instruction += f"### Response:\n"
+
+            response = f"**{sub_title}**\n\n{sub_content}"
+
+            examples.append({
+                "text": instruction + response,
+                "source": f"solved_puzzle_{file_path.stem}",
+                "difficulty": "medium"
+            })
+
+        return examples
+
+    # Helper to parse full markdown file
+    def parse_full_markdown(file_path: Path, source_type: str) -> dict:
+        """Extract full content from markdown."""
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            content = f.read()
+
         title_match = re.search(r'^#\s+(.+)$', content, re.MULTILINE)
         title = title_match.group(1) if title_match else file_path.stem
 
-        # Extract sections
-        sections = {}
-        current_section = "intro"
-        current_content = []
+        return {
+            "text": f"### Instruction:\n[Type: {source_type}]\n\nExplain: {title}\n\n### Response:\n\n{content}",
+            "source": source_type,
+            "difficulty": "medium"
+        }
 
-        for line in content.split('\n'):
-            if line.startswith('##'):
-                if current_content:
-                    sections[current_section] = '\n'.join(current_content).strip()
-                current_section = line.strip('# ').lower().replace(' ', '_')
-                current_content = []
-            else:
-                current_content.append(line)
-
-        if current_content:
-            sections[current_section] = '\n'.join(current_content).strip()
-
-        return {"title": title, "sections": sections, "full_content": content}
-
-    # 1. Process ARweave training dataset (curated examples)
-    print("\n1️⃣ Processing ARweave curated training dataset...")
-    training_file = repo_dir / "data" / "training_dataset.json"
-    arweave_count = 0
-    if training_file.exists():
-        with open(training_file, 'r') as f:
-            dataset = json.load(f)
-
-        for puzzle in dataset.get('training_examples', []):
-            instruction = f"### Instruction:\n"
-            instruction += f"[Puzzle Type: {puzzle.get('type', 'general')}] "
-            instruction += f"[Difficulty: {puzzle.get('difficulty', 'medium')}]\n\n"
-            instruction += f"{puzzle.get('problem', '')}\n\n"
-
-            if 'sub_problems' in puzzle:
-                instruction += "Sub-problems:\n"
-                for i, sub in enumerate(puzzle['sub_problems'], 1):
-                    instruction += f"{i}. [{sub.get('type')}] {sub.get('question', '')}\n"
-
-            instruction += "\n### Response:\n"
-
-            response = "Let me solve each sub-problem systematically:\n\n"
-            if 'sub_problems' in puzzle:
-                for i, sub in enumerate(puzzle['sub_problems'], 1):
-                    response += f"**Problem {i}** ({sub.get('type')}):\n"
-                    if 'steps' in sub:
-                        response += "Reasoning:\n" + '\n'.join(f"- {s}" for s in sub['steps']) + "\n"
-                    elif 'explanation' in sub:
-                        response += f"Explanation: {sub['explanation']}\n"
-                    response += f"Solution: {sub.get('solution', '')}\n\n"
-
-            if 'final_solution' in puzzle:
-                response += f"**Final Answer**: {puzzle['final_solution']}\n"
-
-            all_examples.append({
-                "text": instruction + response,
-                "source": "arweave_curated",
-                "difficulty": puzzle.get('difficulty', 'medium')
-            })
-            arweave_count += 1
-
-    print(f"  ✓ {arweave_count} ARweave curated examples")
-
-    # 2. Process ALL solved puzzle writeups
-    print("\n2️⃣ Processing solved puzzle writeups...")
+    # 1. Process ALL solved puzzle writeups - Extract EVERY sub-puzzle!
+    print("\n1️⃣ Processing ALL solved puzzle writeups...")
     solved_dir = repo_dir / "puzzles" / "solved"
     solved_count = 0
     if solved_dir.exists():
         for md_file in solved_dir.glob("*.md"):
+            print(f"  📄 Parsing {md_file.name}...")
             try:
-                parsed = parse_markdown_file(md_file)
+                # Extract sub-puzzles from this file
+                sub_examples = extract_subpuzzles_from_markdown(md_file, md_file.stem)
 
-                # Create instruction from puzzle
-                instruction = f"### Instruction:\n"
-                instruction += f"[Source: ARweave Puzzle] [File: {md_file.name}]\n\n"
-                instruction += f"Explain the solution to: {parsed['title']}\n\n"
-                instruction += "### Response:\n"
-
-                # Extract key information
-                response = f"# {parsed['title']}\n\n"
-
-                # Add solution if present
-                if 'solution' in parsed['sections']:
-                    response += f"**Solution:**\n{parsed['sections']['solution'][:500]}\n\n"
-
-                # Add techniques if present
-                if 'techniques_used' in parsed['sections']:
-                    response += f"**Techniques:**\n{parsed['sections']['techniques_used'][:300]}\n\n"
-
-                # Add method if present
-                if 'method' in parsed['sections']:
-                    response += f"**Method:**\n{parsed['sections']['method'][:400]}\n\n"
-
-                all_examples.append({
-                    "text": instruction + response,
-                    "source": "solved_writeup",
-                    "difficulty": "medium"
-                })
-                solved_count += 1
+                if len(sub_examples) > 0:
+                    all_examples.extend(sub_examples)
+                    solved_count += len(sub_examples)
+                    print(f"     ✓ Extracted {len(sub_examples)} sub-puzzles")
+                else:
+                    # If no sub-puzzles found, add whole file
+                    ex = parse_full_markdown(md_file, "solved_puzzle")
+                    all_examples.append(ex)
+                    solved_count += 1
+                    print(f"     ✓ Added full puzzle")
             except Exception as e:
-                print(f"    ⚠️  Skipped {md_file.name}: {e}")
+                print(f"    ⚠️  Error with {md_file.name}: {e}")
 
-    print(f"  ✓ {solved_count} solved puzzle writeups")
+    print(f"\n  ✅ TOTAL: {solved_count} examples from solved puzzles\n")
 
-    # 3. Process technique deep dives
-    print("\n3️⃣ Processing technique documentation...")
-    techniques_dir = repo_dir / "techniques" / "deep_dives"
-    technique_count = 0
-    if techniques_dir.exists():
-        for md_file in techniques_dir.glob("*.md"):
-            try:
-                parsed = parse_markdown_file(md_file)
-
-                instruction = f"### Instruction:\n"
-                instruction += f"[Type: Technique Documentation]\n\n"
-                instruction += f"Explain the technique: {parsed['title']}\n\n"
-                instruction += "### Response:\n"
-
-                # Extract first 1000 chars of content as the explanation
-                response = parsed['full_content'][:1500] + "..."
-
-                all_examples.append({
-                    "text": instruction + response,
-                    "source": "technique_guide",
-                    "difficulty": "educational"
-                })
-                technique_count += 1
-            except Exception as e:
-                print(f"    ⚠️  Skipped {md_file.name}: {e}")
-
-    print(f"  ✓ {technique_count} technique guides")
-
-    # 4. Process cryptocurrency puzzles
-    print("\n4️⃣ Processing cryptocurrency puzzles...")
-    crypto_file = repo_dir / "cryptocurrency_puzzles" / "datasets" / "challenge_index.json"
-    crypto_count = 0
-    if crypto_file.exists():
-        with open(crypto_file, 'r') as f:
-            crypto_data = json.load(f)
-
-        # Bitcoin puzzle examples
-        bitcoin_puzzle = crypto_data.get('bitcoin_puzzle_transaction', {})
-        for solve in bitcoin_puzzle.get('recent_solves', [])[:5]:
-            instruction = f"### Instruction:\n"
-            instruction += f"[Puzzle Type: Bitcoin Private Key Search] "
-            instruction += f"[Difficulty: {solve.get('difficulty_bits')}-bit]\n\n"
-            instruction += f"Explain Bitcoin Puzzle #{solve.get('puzzle_id')}\n\n"
-            instruction += "### Response:\n"
-
-            response = f"**Bitcoin Puzzle #{solve.get('puzzle_id')}**\n\n"
-            response += f"Search space: 2^{solve.get('difficulty_bits')} operations\n"
-            response += f"Technique: {solve.get('technique', 'GPU brute force')}\n"
-            response += f"Estimated time: {solve.get('solve_time_estimate', 'variable')}\n\n"
-            response += f"Tools: BitCrack, KeyHunt\n"
-            response += f"Address: {solve.get('address')}\n"
-
-            all_examples.append({
-                "text": instruction + response,
-                "source": "cryptocurrency",
-                "difficulty": "hard"
-            })
-            crypto_count += 1
-
-        # Brain wallet examples
-        for bw in crypto_data.get('brain_wallet_vulnerabilities', {}).get('famous_examples', [])[:4]:
-            instruction = f"### Instruction:\n"
-            instruction += f"[Type: Brain Wallet Security]\n\n"
-            instruction += f"Analyze: \"{bw.get('passphrase')}\"\n\n"
-            instruction += "### Response:\n"
-
-            response = f"**Brain Wallet Analysis**\n\n"
-            response += f"Passphrase: \"{bw.get('passphrase')}\"\n"
-            response += f"Status: {bw.get('status')}\n"
-            response += f"Attack time: {bw.get('attack_time')}\n\n"
-            response += f"**Vulnerability**: {bw.get('lesson')}\n"
-
-            all_examples.append({
-                "text": instruction + response,
-                "source": "brain_wallet",
-                "difficulty": "medium"
-            })
-            crypto_count += 1
-
-    print(f"  ✓ {crypto_count} cryptocurrency examples")
-
-    # 5. Process cryptocurrency writeups
-    print("\n5️⃣ Processing cryptocurrency writeups...")
+    # 2. Process cryptocurrency writeups
+    print("2️⃣ Processing cryptocurrency puzzle writeups...")
     crypto_solved = repo_dir / "cryptocurrency_puzzles" / "solved"
-    crypto_writeup_count = 0
+    crypto_count = 0
     if crypto_solved.exists():
         for md_file in crypto_solved.glob("*.md"):
+            print(f"  📄 Parsing {md_file.name}...")
             try:
-                parsed = parse_markdown_file(md_file)
-
-                instruction = f"### Instruction:\n"
-                instruction += f"[Type: Cryptocurrency Puzzle Solution]\n\n"
-                instruction += f"Explain: {parsed['title']}\n\n"
-                instruction += "### Response:\n"
-
-                response = parsed['full_content'][:1200] + "..."
-
-                all_examples.append({
-                    "text": instruction + response,
-                    "source": "crypto_writeup",
-                    "difficulty": "hard"
-                })
-                crypto_writeup_count += 1
+                ex = parse_full_markdown(md_file, "crypto_puzzle")
+                all_examples.append(ex)
+                crypto_count += 1
+                print(f"     ✓ Added")
             except Exception as e:
-                pass
+                print(f"    ⚠️  Error: {e}")
 
-    print(f"  ✓ {crypto_writeup_count} cryptocurrency writeups")
+    print(f"\n  ✅ TOTAL: {crypto_count} cryptocurrency writeups\n")
 
-    # 6. Process steganography challenges
-    print("\n6️⃣ Processing steganography challenges...")
-    steg_file = repo_dir / "steganography_puzzles" / "datasets" / "challenge_index.json"
-    steg_count = 0
-    if steg_file.exists():
+    # 3. Process ALL technique documentation (techniques/ directory)
+    print("3️⃣ Processing technique documentation...")
+    technique_count = 0
+    techniques_base = repo_dir / "techniques"
+    if techniques_base.exists():
+        for md_file in techniques_base.rglob("*.md"):  # Recursive glob!
+            print(f"  📄 Parsing {md_file.name}...")
+            try:
+                ex = parse_full_markdown(md_file, "technique_guide")
+                all_examples.append(ex)
+                technique_count += 1
+                print(f"     ✓ Added")
+            except Exception as e:
+                print(f"    ⚠️  Error: {e}")
+
+    print(f"\n  ✅ TOTAL: {technique_count} technique guides\n")
+
+    # 4. Process ALL other markdown files (READMEs, analysis reports, etc.)
+    print("4️⃣ Processing READMEs, analysis reports, and documentation...")
+    other_count = 0
+
+    # Get all markdown files in root and subdirectories, excluding already processed ones
+    for md_file in repo_dir.rglob("*.md"):
+        # Skip if already processed
+        if 'solved' in str(md_file) or 'techniques' in str(md_file):
+            continue
+
+        # Skip hidden directories
+        if any(part.startswith('.') for part in md_file.parts):
+            continue
+
+        print(f"  📄 Parsing {md_file.relative_to(repo_dir)}...")
         try:
-            with open(steg_file, 'r') as f:
-                steg_data = json.load(f)
-
-            for challenge in steg_data.get('challenges', [])[:5]:
-                instruction = f"### Instruction:\n"
-                instruction += f"[Type: Steganography Challenge]\n\n"
-                instruction += f"Explain steganography techniques\n\n"
-                instruction += "### Response:\n"
-
-                response = f"**Steganography Techniques**\n\n"
-                response += "Common methods:\n"
-                response += "- LSB (Least Significant Bit) manipulation\n"
-                response += "- Alpha channel hiding\n"
-                response += "- Frequency domain (DCT/DFT)\n"
-                response += "- Metadata embedding\n"
-
-                all_examples.append({
-                    "text": instruction + response,
-                    "source": "steganography",
-                    "difficulty": "medium"
-                })
-                steg_count += 1
+            ex = parse_full_markdown(md_file, "documentation")
+            all_examples.append(ex)
+            other_count += 1
+            print(f"     ✓ Added")
         except Exception as e:
-            pass
+            print(f"    ⚠️  Error: {e}")
 
-    print(f"  ✓ {steg_count} steganography examples")
-
-    # 7. Add general cryptography examples
-    print("\n7️⃣ Adding general cryptography examples...")
-    general_examples = [
-        {
-            "text": """### Instruction:
-[Type: Classical Cipher] [Difficulty: easy]
-
-Solve: KHOOR ZRUOG (Caesar cipher)
-
-### Response:
-**Caesar Cipher Solution**
-
-This is a Caesar cipher with shift 3:
-- K → H (shift -3)
-- H → E
-- O → L
-- O → L
-- R → O
-
-Result: HELLO WORLD
-
-Technique: Try all 26 possible shifts (brute force)""",
-            "source": "educational",
-            "difficulty": "easy"
-        },
-        {
-            "text": """### Instruction:
-[Type: Cryptarithm] [Difficulty: medium]
-
-Solve: SEND + MORE = MONEY
-
-### Response:
-**Cryptarithm Solution**
-
-Each letter = unique digit (0-9)
-
-Working through constraints:
-- M must be 1 (carry from S+M)
-- S must be 8 or 9
-- Systematically test combinations
-
-Solution: 9567 + 1085 = 10652
-
-Mapping: S=9, E=5, N=6, D=7, M=1, O=0, R=8, Y=2""",
-            "source": "educational",
-            "difficulty": "medium"
-        },
-        {
-            "text": """### Instruction:
-[Type: Hash Function] [Difficulty: medium]
-
-Explain SHA-256 usage in puzzles
-
-### Response:
-**SHA-256 in Cryptopuzzles**
-
-SHA-256 produces 64-character hex output (256 bits)
-
-Common puzzle uses:
-1. **Hash tail extraction**: Take last N chars
-2. **Private key derivation**: Hash passphrase
-3. **Verification**: Prove solution correctness
-
-Example:
-SHA256("Bitcoin") = "b4056df6691f8dc72e56302ddad345d65fead3ead9299609a826e2344eb63aa4"
-Last 8 chars: "eb63aa4"
-
-Tools: Python hashlib, online calculators""",
-            "source": "educational",
-            "difficulty": "medium"
-        }
-    ]
-
-    all_examples.extend(general_examples)
-    print(f"  ✓ {len(general_examples)} educational examples")
+    print(f"\n  ✅ TOTAL: {other_count} additional markdown files\n")
 
     print(f"\n📊 TOTAL EXAMPLES: {len(all_examples)}")
     print(f"   Sources breakdown:")
