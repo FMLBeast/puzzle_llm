@@ -37,6 +37,7 @@ image = modal.Image.debian_slim(python_version="3.11").apt_install(
     "exiftool",  # Metadata extraction
 ).pip_install(
     "Pillow",  # Image manipulation
+    "numpy",  # Numerical operations
     "pycryptodome",  # Crypto operations
     "web3",  # Ethereum
     "bitcoin",  # Bitcoin operations
@@ -1077,8 +1078,7 @@ def generate_file_forensics_puzzles(count: int = 160):
 
     for i in range(count):
         puzzle_type = random.choice([
-            "deleted_files", "filesystem_slack", "fat_forensics",
-            "ext4_analysis", "ntfs_ads", "zip_recovery", "pdf_metadata"
+            "deleted_files", "ntfs_ads", "zip_recovery"
         ])
 
         if puzzle_type == "deleted_files":
