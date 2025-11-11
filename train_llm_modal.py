@@ -571,7 +571,7 @@ def upload_data(local_path: str):
 
 
 @app.function(
-    image=image.pip_install("anthropic>=0.18.0"),
+    image=solver_image,
     volumes={"/data": puzzle_data_volume, "/models": volume},
     timeout=7200,
     secrets=[modal.Secret.from_name("anthropic-api-key", required=False)],
