@@ -303,8 +303,7 @@ def generate_cryptography_puzzles(count: int = 200):
 
     for i in range(count):
         puzzle_type = random.choice([
-            "gpg_decrypt", "rsa_factor", "certificate_parse", "der_analysis",
-            "padding_oracle", "weak_primes", "common_modulus", "pgp_key"
+            "gpg_decrypt", "rsa_factor", "certificate_parse", "weak_primes"
         ])
 
         if puzzle_type == "gpg_decrypt":
@@ -537,8 +536,7 @@ def generate_blockchain_puzzles(count: int = 160):
 
     for i in range(count):
         puzzle_type = random.choice([
-            "reentrancy", "evm_bytecode", "btc_transaction", "bip39_recovery",
-            "solidity_vuln", "web3_call", "eth_signature", "smart_contract_audit"
+            "reentrancy", "evm_bytecode", "btc_transaction", "bip39_recovery"
         ])
 
         if puzzle_type == "reentrancy":
@@ -833,8 +831,7 @@ def generate_binary_analysis_puzzles(count: int = 160):
 
     for i in range(count):
         puzzle_type = random.choice([
-            "magic_bytes", "elf_strings", "assembly_trace", "hex_decode",
-            "file_repair", "pe_analysis", "objdump", "xxd_analysis"
+            "magic_bytes", "elf_strings", "assembly_trace", "hex_decode", "file_repair"
         ])
 
         if puzzle_type == "magic_bytes":
